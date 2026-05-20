@@ -1,42 +1,53 @@
-using Meziantou.Framework.Win32;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
-using Raindrops.Constants;
 using Raindrops.Helpers;
-using Raindrops.Pages;
 using Raindrops.Services;
 
-namespace Raindrops;
+namespace Raindrops.Pages;
 
 internal sealed partial class RaindropsPage : DynamicListPage, IDisposable
 {
-    public const string IconUrl = "https://help.raindrop.io/brand/icon_raw.svg";
     public const string PageId = "RaindropsPage";
     public const string PageTitle = "Raindrops";
     public const string PageSubtitle = "Your Raindrop.io Bookmarks";
-    private Credential? credential;
+
+    // Use local asset instead of remote URL so the icon shows in Command Palette
+    public static readonly IconInfo AppIcon =
+        IconHelpers.FromRelativePath("Assets\\StoreLogo.scale-100.png");
+
+    private readonly RaindropsSettingsManager _settingsManager;
     private ListItem[]? items;
     private readonly Debouncer debouncer = new();
 
-    public RaindropsPage()
+    public RaindropsPage(RaindropsSettingsManager settingsManager)
     {
+        _settingsManager = settingsManager;
         Id = PageId;
-        Icon = new(IconUrl);
+        Icon = AppIcon;
         Title = PageTitle;
+
+        _settingsManager.Settings.SettingsChanged += OnSettingsChanged;
+    }
+
+    private void OnSettingsChanged(object? sender, Settings args)
+    {
+        items = null;
+        RaiseItemsChanged(0);
     }
 
     public override IListItem[] GetItems()
     {
-        credential = CredentialManager.ReadCredential(Application.Name);
+        var token = _settingsManager.ApiToken;
 
-        if (credential?.Password is null)
+        if (string.IsNullOrWhiteSpace(token))
         {
             return [
-                new ListItem(new SetRaindropTokenPage())
+                new ListItem(new NoOpCommand())
                 {
-                    Title = SetRaindropTokenPage.PageTitle,
-                    Subtitle = "Set your Raindrop.io API Token"
-                }];
+                    Title = "API Token not configured",
+                    Subtitle = "Open Command Palette Settings → Extensions → Raindrops to set your token"
+                }
+            ];
         }
 
         if (items is not null)
@@ -46,7 +57,7 @@ internal sealed partial class RaindropsPage : DynamicListPage, IDisposable
 
         items = RaindropService.GetBookmarksAsync(
             searchTerm: SearchText,
-            raindropApiKey: credential.Password,
+            raindropApiKey: token,
             cancellationToken: debouncer.GetToken()).GetAwaiter().GetResult();
 
         if (items?.Length == 0)
@@ -61,13 +72,15 @@ internal sealed partial class RaindropsPage : DynamicListPage, IDisposable
     {
         if (oldSearch == newSearch || items is null) return;
 
+        var token = _settingsManager.ApiToken;
+        if (string.IsNullOrWhiteSpace(token)) return;
 
         await debouncer.DebounceAsync(async () =>
         {
             IsLoading = true;
 
             items = await RaindropService.GetBookmarksAsync(
-                raindropApiKey: credential?.Password ?? string.Empty,
+                raindropApiKey: token,
                 searchTerm: newSearch,
                 cancellationToken: debouncer.GetToken());
 
@@ -75,11 +88,11 @@ internal sealed partial class RaindropsPage : DynamicListPage, IDisposable
             IsLoading = false;
 
         }, 300);
-
     }
 
     public void Dispose()
     {
+        _settingsManager.Settings.SettingsChanged -= OnSettingsChanged;
         debouncer.Dispose();
     }
 }
