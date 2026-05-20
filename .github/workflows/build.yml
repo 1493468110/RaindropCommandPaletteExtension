@@ -34,6 +34,19 @@ jobs:
       - name: Setup msbuild.exe
         uses: microsoft/setup-msbuild@v2
 
+      - name: Create self-signed certificate
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject "CN=Raindrops" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "Raindrops" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $password = ConvertTo-SecureString -String "raindrops" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath "$env:RUNNER_TEMP\raindrops.pfx" -Password $password
+          echo "CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
       - name: Modify version in manifest
         run: |
           $manifestPath = "Raindrops\Package.appxmanifest"
@@ -45,7 +58,15 @@ jobs:
         run: msbuild Raindrops.sln /t:Restore /p:Configuration=Release
 
       - name: Build Plugin
-        run: msbuild Raindrops\Raindrops.csproj /p:Configuration=Release /p:Platform=${{matrix.platform}} /p:Version=${{env.VERSION}} /p:AppxPackageDir=AppxPackages\
+        run: |
+          msbuild Raindrops\Raindrops.csproj `
+            /p:Configuration=Release `
+            /p:Platform=${{matrix.platform}} `
+            /p:Version=${{env.VERSION}} `
+            /p:AppxPackageDir=AppxPackages\ `
+            /p:PackageCertificateThumbprint=${{env.CERT_THUMBPRINT}} `
+            /p:PackageCertificateKeyFile="$env:RUNNER_TEMP\raindrops.pfx" `
+            /p:PackageCertificatePassword=raindrops
 
       - name: Prepare artifact
         run: |
